@@ -15,7 +15,69 @@ export function extractVideos(alreadyCapturedUrls = []) {
     }
   };
 
+  const getPageTitle = () => {
+    let title = document.title || 'Extracted Video';
+    title = title.replace(/\s*-\s*YouTube\s*Music/i, '');
+    title = title.replace(/\s*-\s*YouTube/i, '');
+    title = title.replace(/\s*\|\s*Pinterest/i, '');
+    return title.trim();
+  };
+
+  const cleanMediaUrl = (url) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.includes('googlevideo.com') || parsed.pathname.includes('/videoplayback')) {
+        // Strip byte-range parameters to play/download the full media
+        parsed.searchParams.delete('range');
+        parsed.searchParams.delete('rn');
+        parsed.searchParams.delete('rbuf');
+      }
+      return parsed.href;
+    } catch (e) {
+      return url;
+    }
+  };
+
+  const cleanUrlForMatching = (url) => {
+    if (!url) return '';
+    try {
+      const parsed = new URL(url);
+      return (parsed.origin + parsed.pathname).toLowerCase();
+    } catch (e) {
+      return url.split('?')[0].split('#')[0].toLowerCase();
+    }
+  };
+
+  const findPinterestMetaFromDOM = (videoUrl) => {
+    try {
+      const parts = videoUrl.split('/');
+      const fileName = parts[parts.length - 1].split('?')[0];
+      const hash = fileName.split('.')[0];
+      
+      if (hash && hash.length > 10) {
+        const imgs = Array.from(document.querySelectorAll('img'));
+        for (const img of imgs) {
+          const src = img.src || img.getAttribute('src');
+          if (src && src.includes(hash)) {
+            return {
+              thumbnail: src,
+              title: img.getAttribute('alt') || img.getAttribute('title') || ''
+            };
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  };
+
   const getExtension = (url) => {
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('mime=video%2fwebm') || lowerUrl.includes('mime=video/webm')) return 'webm';
+    if (lowerUrl.includes('mime=video%2fmp4') || lowerUrl.includes('mime=video/mp4')) return 'mp4';
+    if (lowerUrl.includes('mime=video%2f3gpp') || lowerUrl.includes('mime=video/3gpp')) return '3gp';
+    if (lowerUrl.includes('.m3u8')) return 'm3u8';
+    if (lowerUrl.includes('.mpd')) return 'mpd';
+    
     const cleanUrl = url.split('?')[0];
     const parts = cleanUrl.split('.');
     if (parts.length > 1) {
@@ -29,22 +91,52 @@ export function extractVideos(alreadyCapturedUrls = []) {
     const absoluteUrl = resolveUrl(url);
     if (!absoluteUrl) return;
     
-    // Ignore duplicates
-    if (addedUrls.has(absoluteUrl)) return;
-    addedUrls.add(absoluteUrl);
+    // Ignore unplayable blob URLs entirely
+    if (absoluteUrl.startsWith('blob:')) return;
 
-    const isBlob = absoluteUrl.startsWith('blob:');
-    let ext = isBlob ? 'blob' : getExtension(absoluteUrl);
-    if (absoluteUrl.includes('.m3u8')) ext = 'm3u8';
-    if (absoluteUrl.includes('.mpd')) ext = 'mpd';
+    // Clean YouTube / google video streams of chunking bounds
+    const cleanedUrl = cleanMediaUrl(absoluteUrl);
+
+    if (addedUrls.has(cleanedUrl)) return;
+    addedUrls.add(cleanedUrl);
+
+    const ext = getExtension(cleanedUrl);
+
+    let displayTitle = title;
+    let displayThumbnail = thumbnail;
+
+    // Try to resolve Pinterest cover picture and title from DOM matching
+    if (cleanedUrl.includes('pinimg.com') || cleanedUrl.includes('pinterest.com')) {
+      const domMeta = findPinterestMetaFromDOM(cleanedUrl);
+      if (domMeta) {
+        if (!displayTitle) displayTitle = domMeta.title;
+        if (!displayThumbnail) displayThumbnail = domMeta.thumbnail;
+      }
+    }
+
+    // Try to resolve high-quality unique metadata from global state registry using query-agnostic matching key
+    const matchKey = cleanUrlForMatching(cleanedUrl);
+    if (window.clipnetMetadataRegistry && window.clipnetMetadataRegistry[matchKey]) {
+      const meta = window.clipnetMetadataRegistry[matchKey];
+      if (!displayTitle) displayTitle = meta.title;
+      if (!displayThumbnail) displayThumbnail = meta.thumbnail;
+    }
+
+    if (!displayTitle) {
+      if (cleanedUrl.includes('googlevideo.com') || cleanedUrl.includes('youtube.com') || cleanedUrl.includes('/videoplayback')) {
+        displayTitle = `${getPageTitle()}`;
+      } else {
+        displayTitle = cleanedUrl.split('/').pop().split('?')[0] || 'Web Video';
+      }
+    }
 
     items.push({
       id: `video_${items.length}_${Date.now()}`,
       type: MEDIA_TYPES.VIDEO,
-      url: absoluteUrl,
-      title: title || absoluteUrl.split('/').pop().split('?')[0] || 'Web Video',
-      thumbnail: thumbnail,
-      size: isBlob ? 'Blob URL' : null,
+      url: cleanedUrl,
+      title: displayTitle,
+      thumbnail: displayThumbnail,
+      size: null,
       extension: ext
     });
   };
@@ -88,7 +180,11 @@ export function extractVideos(alreadyCapturedUrls = []) {
                     lowerUrl.includes('.mpd') || 
                     lowerUrl.includes('.mov') ||
                     lowerUrl.includes('.m4v') ||
-                    lowerUrl.includes('v.pinimg.com/videos/');
+                    lowerUrl.includes('v.pinimg.com/videos/') ||
+                    lowerUrl.includes('googlevideo.com/videoplayback') ||
+                    lowerUrl.includes('youtube.com/videoplayback') ||
+                    lowerUrl.includes('mime=video') ||
+                    lowerUrl.includes('mime%3dvideo');
 
     if (isVideo) {
       addVideo(url);

@@ -3,58 +3,318 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ClipNest - Video Preview</title>
+  <title>ClipNet - Media Preview Theater</title>
+  <!-- Load Premium Modern Font from Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
   <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0a0a0c 0%, #15151a 100%);
+      --accent-color: #f43f5e;
+      --accent-glow: rgba(244, 63, 94, 0.4);
+      --glass-bg: rgba(24, 24, 28, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.06);
+      --text-main: #f4f4f5;
+      --text-muted: #a1a1aa;
+    }
+
     body {
       margin: 0;
-      background: #0f0f0f;
+      padding: 0;
+      background: var(--bg-gradient);
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      color: #faf9f5;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 20px;
+      color: var(--text-main);
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       box-sizing: border-box;
+      overflow-x: hidden;
     }
-    .preview-container {
-      width: 100%;
-      max-width: 960px;
+
+    /* Ambient background glowing orbs */
+    .glow-orb {
+      position: absolute;
+      width: 400px;
+      height: 400px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--accent-glow) 0%, rgba(20, 20, 25, 0) 70%);
+      top: 10%;
+      left: 10%;
+      z-index: -1;
+      filter: blur(40px);
+      pointer-events: none;
+      animation: drift 15s infinite alternate ease-in-out;
+    }
+
+    .glow-orb-2 {
+      position: absolute;
+      width: 450px;
+      height: 450px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(20, 20, 25, 0) 70%);
+      bottom: 10%;
+      right: 10%;
+      z-index: -1;
+      filter: blur(40px);
+      pointer-events: none;
+      animation: drift 18s infinite alternate-reverse ease-in-out;
+    }
+
+    @keyframes drift {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(50px, 30px) scale(1.1); }
+    }
+
+    .theater-container {
+      width: 90%;
+      max-width: 900px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 20px;
+      gap: 28px;
+      z-index: 1;
+      animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      opacity: 0;
     }
+
+    @keyframes fadeIn {
+      to { opacity: 1; transform: translateY(0); }
+      from { opacity: 0; transform: translateY(20px); }
+    }
+
+    .header-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 8px 18px;
+      border-radius: 30px;
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(10px);
+    }
+
+    .header-badge img {
+      width: 20px;
+      height: 20px;
+    }
+
+    .header-badge span {
+      font-size: 0.85rem;
+      font-weight: 500;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    /* Glassmorphism Player Wrapper */
+    .player-card {
+      width: 100%;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      padding: 24px;
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), 
+                  inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(20px);
+      box-sizing: border-box;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .player-card:hover {
+      border-color: rgba(255, 255, 255, 0.12);
+      box-shadow: 0 35px 70px rgba(0, 0, 0, 0.5), 
+                  inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .video-viewport {
+      position: relative;
+      width: 100%;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #000;
+      aspect-ratio: 16/9;
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+    }
+
     video {
       width: 100%;
-      border-radius: 12px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-      background: #000;
+      height: 100%;
+      object-fit: contain;
+      display: block;
     }
-    .title {
-      font-size: 1.2rem;
+
+    /* Audio card styling for audio items opened in preview */
+    .audio-mode-viewport {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #18181f 0%, #0c0c0e 100%);
+      aspect-ratio: 16/5 !important;
+    }
+
+    .audio-visualization {
+      font-size: 3.5rem;
+      animation: pulse 2s infinite alternate ease-in-out;
+      margin-bottom: 12px;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); filter: drop-shadow(0 0 5px rgba(244, 63, 94, 0.2)); }
+      100% { transform: scale(1.08); filter: drop-shadow(0 0 20px rgba(244, 63, 94, 0.6)); }
+    }
+
+    .info-section {
+      margin-top: 24px;
+      text-align: left;
+      width: 100%;
+    }
+
+    .video-title {
+      font-size: 1.5rem;
       font-weight: 600;
-      text-align: center;
-      word-break: break-all;
-      margin: 0;
+      color: var(--text-main);
+      margin: 0 0 10px 0;
+      line-height: 1.3;
+      word-break: break-word;
     }
-    .url {
-      font-size: 0.85rem;
-      opacity: 0.5;
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 14px;
+    }
+
+    .url-box {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 10px 16px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
       word-break: break-all;
-      text-align: center;
-      max-width: 80%;
+      flex-grow: 1;
+      max-width: 65%;
+      user-select: all;
+    }
+
+    .action-buttons {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    button {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 12px 24px;
+      border-radius: 14px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-download {
+      background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+      color: #fff;
+      box-shadow: 0 10px 25px var(--accent-glow);
+    }
+
+    .btn-download:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(244, 63, 94, 0.6);
+      filter: brightness(1.1);
+    }
+
+    .btn-download:active {
+      transform: translateY(1px);
+    }
+
+    .btn-copy {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      border: 1px solid var(--glass-border);
+    }
+
+    .btn-copy:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      background: rgba(24, 24, 27, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 12px 24px;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 999;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
     }
   </style>
   <script src="hls.min.js"></script>
 </head>
 <body>
-  <div class="preview-container">
-    <video id="player" controls autoplay></video>
-    <h1 class="title" id="video-title">Loading preview...</h1>
-    <div class="url" id="video-url"></div>
+  <!-- Ambient orbs -->
+  <div class="glow-orb"></div>
+  <div class="glow-orb-2"></div>
+
+  <div class="theater-container">
+    <div class="header-badge">
+      <img src="icons/icon48.png" alt="ClipNet">
+      <span>ClipNet Preview Theater</span>
+    </div>
+
+    <div class="player-card">
+      <div class="video-viewport" id="viewport">
+        <video id="player" controls autoplay></video>
+      </div>
+
+      <div class="info-section">
+        <h1 class="video-title" id="video-title">Loading premium preview...</h1>
+        
+        <div class="meta-row">
+          <div class="url-box" id="video-url">Initializing connection...</div>
+          
+          <div class="action-buttons">
+            <button class="btn-copy" id="btn-copy">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              Copy Link
+            </button>
+            <button class="btn-download" id="btn-download">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              Download Media
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <div class="toast" id="toast">Link copied successfully!</div>
+
   <script src="preview.js"></script>
 </body>
 </html>

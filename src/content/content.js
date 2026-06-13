@@ -19,6 +19,42 @@ function safeSendMessage(message) {
   return false;
 }
 
+const cleanUrlForMatching = (url) => {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    return (parsed.origin + parsed.pathname).toLowerCase();
+  } catch (e) {
+    return url.split('?')[0].split('#')[0].toLowerCase();
+  }
+};
+
+const processPageVideos = (videos) => {
+  let hasNew = false;
+  if (!window.clipnetMetadataRegistry) {
+    window.clipnetMetadataRegistry = {};
+  }
+  videos.forEach(item => {
+    if (!item) return;
+    const url = typeof item === 'string' ? item : item.url;
+    if (typeof item === 'object' && item.url) {
+      const cleanKey = cleanUrlForMatching(item.url);
+      window.clipnetMetadataRegistry[cleanKey] = {
+        title: item.title,
+        thumbnail: item.thumbnail
+      };
+    }
+    if (!localNetworkUrls.includes(url)) {
+      localNetworkUrls.push(url);
+      hasNew = true;
+    }
+  });
+  if (hasNew) {
+    setCapturedNetworkUrls(localNetworkUrls);
+  }
+  return hasNew;
+};
+
 let cleanupObserver = null;
 
 // Start observing page changes and save results to cache in background
@@ -41,12 +77,24 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
       return false;
     }
 
-    // Support both legacy 'getVideos' and new 'getMedia' message calls
+// Support both legacy 'getVideos' and new 'getMedia' message calls
     if (request.type === MESSAGE_TYPES.GET_MEDIA || request.type === 'getVideos') {
-      performScan((media) => {
-        sendResponse({ media, videos: media.videos });
-      });
-      return true; // keep channel open for async response
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+        chrome.runtime.sendMessage({ type: 'getPageVideos' }, (response) => {
+          const extraUrls = (response && response.videos) || [];
+          processPageVideos(extraUrls);
+
+          performScan((media) => {
+            sendResponse({ media, videos: media.videos });
+          });
+        });
+        return true; // keep channel open for async response
+      } else {
+        performScan((media) => {
+          sendResponse({ media, videos: media.videos });
+        });
+        return true;
+      }
     }
 
     if (request.type === MESSAGE_TYPES.FOUND_MEDIA) {
@@ -66,5 +114,26 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
     }
     return false;
   });
+}
+
+// At startup, immediately fetch page-specific Redux state videos (e.g. Pinterest)
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+  try {
+    chrome.runtime.sendMessage({ type: 'getPageVideos' }, (response) => {
+      if (chrome.runtime.lastError) return;
+      const extraUrls = (response && response.videos) || [];
+      const hasNew = processPageVideos(extraUrls);
+      if (hasNew) {
+        performScan((media) => {
+          safeSendMessage({
+            type: 'saveMedia',
+            payload: media
+          });
+        });
+      }
+    });
+  } catch (e) {
+    // Suppress errors during tab startup/disconnect transitions
+  }
 }
 

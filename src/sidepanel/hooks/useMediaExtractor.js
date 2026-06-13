@@ -47,10 +47,22 @@ export default function useMediaExtractor() {
     const handleTabChange = () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs && tabs[0]) {
-          const tabId = tabs[0].id;
+          const tab = tabs[0];
+          const url = tab.url || '';
+          
+          // Ignore extension pages, chrome settings, empty tabs, etc. to prevent false connection errors
+          if (url.startsWith('chrome-extension://') || 
+              url.startsWith('chrome://') || 
+              url.startsWith('edge://') || 
+              url.startsWith('about:') || 
+              url === '') {
+            // Keep the previous activeTabId and its cached media!
+            return;
+          }
+
+          const tabId = tab.id;
           setActiveTabId(tabId);
           loadMediaFromCache(tabId);
-          // Attempt an on-demand scan to get the freshest data
           triggerScan(tabId);
         }
       });
@@ -62,8 +74,16 @@ export default function useMediaExtractor() {
     chrome.tabs.onActivated.addListener(handleTabChange);
     
     // Listen to tab updates (reloads/navigations)
-    const handleTabUpdate = (tabId, changeInfo) => {
+    const handleTabUpdate = (tabId, changeInfo, tab) => {
       if (changeInfo.status === 'complete' && tabId === activeTabId) {
+        const url = tab?.url || '';
+        if (url.startsWith('chrome-extension://') || 
+            url.startsWith('chrome://') || 
+            url.startsWith('edge://') || 
+            url.startsWith('about:') || 
+            url === '') {
+          return;
+        }
         loadMediaFromCache(tabId);
         triggerScan(tabId);
       }
