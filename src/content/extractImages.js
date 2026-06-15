@@ -5,7 +5,30 @@ export function extractImages(alreadyCapturedUrls = []) {
   const sourceElements = Array.from(document.querySelectorAll('picture source, source'));
   const bgElements = Array.from(document.querySelectorAll('[style*="background"]'));
   const items = [];
-  const addedUrls = new Set();
+  const addedCleanKeys = new Set();
+
+  const cleanUrlForMatching = (url) => {
+    if (!url) return '';
+    try {
+      const parsed = new URL(url);
+      let pathname = parsed.pathname.toLowerCase();
+      
+      if (parsed.hostname.includes('googlevideo.com') || pathname.includes('/videoplayback')) {
+        const idParam = parsed.searchParams.get('id');
+        return `${parsed.origin}${pathname}?id=${idParam || ''}`.toLowerCase();
+      }
+      
+      pathname = pathname.replace(/\.(m3u8|mp4|webm|mpd|ts|mov|m4v|3gp)$/i, '');
+      pathname = pathname.replace(/[-_](\d+w|\d+p|\d+k|hls|master|preview)(_?\d+)?$/i, '');
+      
+      return (parsed.origin + pathname).toLowerCase();
+    } catch (e) {
+      let clean = url.split('?')[0].split('#')[0].toLowerCase();
+      clean = clean.replace(/\.(m3u8|mp4|webm|mpd|ts|mov|m4v|3gp)$/i, '');
+      clean = clean.replace(/[-_](\d+w|\d+p|\d+k|hls|master|preview)(_?\d+)?$/i, '');
+      return clean;
+    }
+  };
 
   const resolveUrl = (src) => {
     if (!src) return null;
@@ -33,8 +56,9 @@ export function extractImages(alreadyCapturedUrls = []) {
     // Ignore tracker/tiny spacer pixels (< 15 characters, or typical tiny data URIs)
     if (absoluteUrl.startsWith('data:image') && absoluteUrl.length < 150) return;
 
-    if (addedUrls.has(absoluteUrl)) return;
-    addedUrls.add(absoluteUrl);
+    const matchKey = cleanUrlForMatching(absoluteUrl);
+    if (addedCleanKeys.has(matchKey)) return;
+    addedCleanKeys.add(matchKey);
 
     const isBlob = absoluteUrl.startsWith('blob:');
     const ext = isBlob ? 'blob' : getExtension(absoluteUrl);

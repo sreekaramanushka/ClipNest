@@ -2,6 +2,81 @@
 
 const capturedUrlsByTab = {};
 
+function getExtensionFromUrl(url) {
+  if (!url) return '.mp4';
+  const lowerUrl = url.toLowerCase();
+  
+  if (lowerUrl.includes('.mp3') || lowerUrl.includes('mime=audio')) return '.mp3';
+  if (lowerUrl.includes('.wav')) return '.wav';
+  if (lowerUrl.includes('.aac')) return '.aac';
+  if (lowerUrl.includes('.ogg')) return '.ogg';
+  if (lowerUrl.includes('.flac')) return '.flac';
+  if (lowerUrl.includes('.m4a')) return '.m4a';
+  if (lowerUrl.includes('.opus')) return '.opus';
+  
+  if (lowerUrl.includes('.m3u8')) return '.m3u8';
+  if (lowerUrl.includes('.mpd')) return '.mpd';
+  if (lowerUrl.includes('.webm') || lowerUrl.includes('mime=video%2fwebm') || lowerUrl.includes('mime=video/webm')) return '.webm';
+  
+  if (lowerUrl.includes('.jpg') || lowerUrl.includes('.jpeg')) return '.jpg';
+  if (lowerUrl.includes('.png')) return '.png';
+  if (lowerUrl.includes('.gif')) return '.gif';
+  if (lowerUrl.includes('.webp')) return '.webp';
+  if (lowerUrl.includes('.svg')) return '.svg';
+  
+  const cleanUrl = url.split('?')[0].split('#')[0];
+  const lastDot = cleanUrl.lastIndexOf('.');
+  if (lastDot !== -1) {
+    const suffix = cleanUrl.slice(lastDot).toLowerCase();
+    if (suffix.length <= 5 && /^\.[a-z0-9]+$/.test(suffix)) {
+      return suffix;
+    }
+  }
+  
+  return '.mp4';
+}
+
+function sanitizeFilename(filename, url) {
+  if (!filename || typeof filename !== 'string') {
+    filename = 'download';
+  }
+  
+  const lastDotIndex = filename.lastIndexOf('.');
+  let name = lastDotIndex !== -1 ? filename.slice(0, lastDotIndex) : filename;
+  let ext = lastDotIndex !== -1 ? filename.slice(lastDotIndex) : '';
+  
+  const extClean = ext.replace('.', '').trim().toLowerCase();
+  const isValidExt = extClean && extClean.length <= 5 && /^[a-z0-9]+$/.test(extClean);
+  
+  if (!isValidExt) {
+    if (ext) {
+      name = name + ext;
+    }
+    ext = getExtensionFromUrl(url);
+  }
+
+  // Override HLS/DASH manifest extensions to MP4 so they save as playable video files
+  const finalExtClean = ext.replace('.', '').trim().toLowerCase();
+  if (finalExtClean === 'm3u8' || finalExtClean === 'mpd') {
+    ext = '.mp4';
+  }
+  
+  name = name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+             .replace(/[^a-zA-Z0-9\s\-_().,]/g, '')
+             .replace(/\s+/g, ' ')
+             .trim();
+             
+  if (name.length > 60) {
+    name = name.slice(0, 60).trim();
+  }
+  
+  if (!name) {
+    name = 'download';
+  }
+  
+  return name + ext;
+}
+
 // Register DNR rules to modify headers for Pinterest CDN (enables bypass of CORS & Referer blocks)
 const PINTEREST_RULE_ID = 1001;
 
@@ -55,7 +130,8 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'download') {
     const { url, filename } = message.payload;
-    chrome.downloads.download({ url, filename }, downloadId => {
+    const safeFilename = sanitizeFilename(filename, url);
+    chrome.downloads.download({ url, filename: safeFilename }, downloadId => {
       if (chrome.runtime.lastError) {
         console.error('Download error:', chrome.runtime.lastError);
         sendResponse({ success: false, error: chrome.runtime.lastError.message });
@@ -325,14 +401,41 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 // Clean up tab cache and logs on closure/updates
+const lastTabUrls = {};
+
 chrome.tabs.onRemoved.addListener(tabId => {
   delete capturedUrlsByTab[tabId];
+  delete lastTabUrls[tabId];
   chrome.storage.local.remove(`media_cache_${tabId}`);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === 'loading') {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const currentUrl = changeInfo.url || tab?.url || '';
+  if (!currentUrl) return;
+
+  const lastUrl = lastTabUrls[tabId];
+  const urlChanged = lastUrl && lastUrl !== currentUrl;
+  
+  // Update last known URL
+  lastTabUrls[tabId] = currentUrl;
+
+  if (changeInfo.status === 'loading' || urlChanged) {
+    if (currentUrl.startsWith('chrome-extension://') || 
+        currentUrl.startsWith('chrome://') || 
+        currentUrl.startsWith('edge://') || 
+        currentUrl.startsWith('about:')) {
+      return;
+    }
+
+    // Reset captured network URLs for this tab
     delete capturedUrlsByTab[tabId];
+    
+    // Clear storage cache for this tab
     chrome.storage.local.remove(`media_cache_${tabId}`);
+    
+    // Inform content script of SPA navigation
+    chrome.tabs.sendMessage(tabId, { type: 'spaNavigation', payload: { url: currentUrl } }).catch(err => {
+      // Ignore if content script is not yet loaded
+    });
   }
 });

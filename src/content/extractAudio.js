@@ -4,7 +4,7 @@ export function extractAudio(alreadyCapturedUrls = []) {
   const audioElements = Array.from(document.querySelectorAll('audio'));
   const sourceElements = Array.from(document.querySelectorAll('source'));
   const items = [];
-  const addedUrls = new Set();
+  const addedCleanKeys = new Set();
 
   const resolveUrl = (src) => {
     if (!src) return null;
@@ -43,9 +43,22 @@ export function extractAudio(alreadyCapturedUrls = []) {
     if (!url) return '';
     try {
       const parsed = new URL(url);
-      return (parsed.origin + parsed.pathname).toLowerCase();
+      let pathname = parsed.pathname.toLowerCase();
+      
+      if (parsed.hostname.includes('googlevideo.com') || pathname.includes('/videoplayback')) {
+        const idParam = parsed.searchParams.get('id');
+        return `${parsed.origin}${pathname}?id=${idParam || ''}`.toLowerCase();
+      }
+      
+      pathname = pathname.replace(/\.(m3u8|mp4|webm|mpd|ts|mov|m4v|3gp)$/i, '');
+      pathname = pathname.replace(/[-_](\d+w|\d+p|\d+k|hls|master|preview)(_?\d+)?$/i, '');
+      
+      return (parsed.origin + pathname).toLowerCase();
     } catch (e) {
-      return url.split('?')[0].split('#')[0].toLowerCase();
+      let clean = url.split('?')[0].split('#')[0].toLowerCase();
+      clean = clean.replace(/\.(m3u8|mp4|webm|mpd|ts|mov|m4v|3gp)$/i, '');
+      clean = clean.replace(/[-_](\d+w|\d+p|\d+k|hls|master|preview)(_?\d+)?$/i, '');
+      return clean;
     }
   };
 
@@ -69,21 +82,24 @@ export function extractAudio(alreadyCapturedUrls = []) {
     const absoluteUrl = resolveUrl(url);
     if (!absoluteUrl) return;
 
+    // Ignore HLS segments/fragments (.ts files) entirely
+    if (absoluteUrl.toLowerCase().includes('.ts')) return;
+
     // Filter out unplayable blob URLs entirely
     if (absoluteUrl.startsWith('blob:')) return;
 
     // Clean YouTube / google video streams of chunking bounds
     const cleanedUrl = cleanMediaUrl(absoluteUrl);
 
-    if (addedUrls.has(cleanedUrl)) return;
-    addedUrls.add(cleanedUrl);
+    const matchKey = cleanUrlForMatching(cleanedUrl);
+    if (addedCleanKeys.has(matchKey)) return;
+    addedCleanKeys.add(matchKey);
 
     const ext = getExtension(cleanedUrl);
     
     let displayTitle = title;
 
     // Check registry for metadata with query-agnostic key
-    const matchKey = cleanUrlForMatching(cleanedUrl);
     if (window.clipnetMetadataRegistry && window.clipnetMetadataRegistry[matchKey]) {
       const meta = window.clipnetMetadataRegistry[matchKey];
       if (!displayTitle) displayTitle = meta.title;

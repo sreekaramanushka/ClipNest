@@ -128,9 +128,156 @@ const VideoThumbnail = ({ video }) => {
   );
 };
 
+const downloadHlsAsMp4 = async (m3u8Url, onProgress) => {
+  const response = await fetch(m3u8Url);
+  if (!response.ok) throw new Error(`Failed to fetch manifest: HTTP ${response.status}`);
+  let manifestText = await response.text();
+  
+  const baseUri = m3u8Url.substring(0, m3u8Url.lastIndexOf('/') + 1);
+  const lines = manifestText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  const isMasterPlaylist = lines.some(line => line.includes('#EXT-X-STREAM-INF'));
+  
+  let targetM3u8Url = m3u8Url;
+  if (isMasterPlaylist) {
+    let bestStreamUrl = null;
+    let maxBandwidth = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
+        const bandwidthMatch = lines[i].match(/BANDWIDTH=(\d+)/i);
+        const bandwidth = bandwidthMatch ? parseInt(bandwidthMatch[1], 10) : 0;
+        
+        let streamUrl = lines[i + 1];
+        if (streamUrl && !streamUrl.startsWith('#')) {
+          if (!streamUrl.startsWith('http')) {
+            streamUrl = new URL(streamUrl, baseUri).href;
+          }
+          if (bandwidth > maxBandwidth) {
+            maxBandwidth = bandwidth;
+            bestStreamUrl = streamUrl;
+          }
+        }
+      }
+    }
+    
+    if (bestStreamUrl) {
+      targetM3u8Url = bestStreamUrl;
+      const subResponse = await fetch(targetM3u8Url);
+      if (!subResponse.ok) throw new Error(`Failed to fetch stream manifest: HTTP ${subResponse.status}`);
+      manifestText = await subResponse.text();
+    }
+  }
+  
+  const subBaseUri = targetM3u8Url.substring(0, targetM3u8Url.lastIndexOf('/') + 1);
+  const mediaLines = manifestText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  
+  const manifestParams = new URL(targetM3u8Url).search;
+  const segmentUrls = [];
+  for (let i = 0; i < mediaLines.length; i++) {
+    const line = mediaLines[i];
+    if (line.startsWith('#')) continue;
+    let segmentUrl = line;
+    if (!segmentUrl.startsWith('http')) {
+      segmentUrl = new URL(segmentUrl, subBaseUri).href;
+    }
+    if (manifestParams && !segmentUrl.includes('?')) {
+      segmentUrl += manifestParams;
+    }
+    segmentUrls.push(segmentUrl);
+  }
+  
+  if (segmentUrls.length === 0) {
+    throw new Error("No video segments found in the HLS playlist.");
+  }
+  
+  const chunks = [];
+  for (let i = 0; i < segmentUrls.length; i++) {
+    if (onProgress) {
+      onProgress(Math.round((i / segmentUrls.length) * 100));
+    }
+    const segmentResponse = await fetch(segmentUrls[i]);
+    if (!segmentResponse.ok) {
+      throw new Error(`Failed to fetch video segment ${i}: HTTP ${segmentResponse.status}`);
+    }
+    const arrayBuffer = await segmentResponse.arrayBuffer();
+    chunks.push(new Uint8Array(arrayBuffer));
+  }
+  
+  if (onProgress) {
+    onProgress(100);
+  }
+  
+  let totalLength = 0;
+  for (const chunk of chunks) {
+    totalLength += chunk.length;
+  }
+  
+  const concatenated = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    concatenated.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  return new Blob([concatenated], { type: 'video/mp4' });
+};
+
 const VideoCard = ({ video }) => {
-  const handleDownload = () => {
-    chrome.runtime.sendMessage({ type: 'download', payload: { url: video.url, filename: video.title || 'video.mp4' } });
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(null);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setDownloadProgress(0);
+
+    const triggerDownload = (url, filename) => {
+      try {
+        chrome.runtime.sendMessage({ 
+          type: 'download', 
+          payload: { url, filename } 
+        }, (response) => {
+          setDownloading(false);
+          setDownloadProgress(null);
+          if (chrome.runtime.lastError) {
+            console.error("Download error:", chrome.runtime.lastError);
+            alert(`Download failed: ${chrome.runtime.lastError.message}`);
+          } else if (response && !response.success) {
+            alert(`Download failed: ${response.error || 'Unknown error'}`);
+          }
+        });
+      } catch (err) {
+        setDownloading(false);
+        setDownloadProgress(null);
+        console.error("Messaging failed:", err);
+        alert("Connection to extension lost. Please reload the webpage.");
+      }
+    };
+
+    try {
+      const isHls = video.url.toLowerCase().includes('.m3u8');
+      let blob;
+      if (isHls) {
+        blob = await downloadHlsAsMp4(video.url, (progress) => {
+          setDownloadProgress(progress);
+        });
+      } else {
+        const response = await fetch(video.url);
+        if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+        blob = await response.blob();
+      }
+      
+      const blobUrl = URL.createObjectURL(blob);
+      const filename = video.title || 'video.mp4';
+      const cleanFilename = filename.toLowerCase().endsWith('.m3u8') 
+        ? filename.slice(0, -5) + '.mp4' 
+        : filename;
+      
+      triggerDownload(blobUrl, cleanFilename);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 20000);
+    } catch (e) {
+      console.warn("Pre-fetch failed, downloading directly:", e);
+      triggerDownload(video.url, video.title || 'video.mp4');
+    }
   };
 
   const handlePreview = () => {
@@ -152,8 +299,16 @@ const VideoCard = ({ video }) => {
       </div>
       
       <div className="video-actions">
-        <button onClick={handlePreview}>Preview</button>
-        <button className="btn-download" onClick={handleDownload}>Download</button>
+        <button onClick={handlePreview} disabled={downloading}>Preview</button>
+        <button 
+          className="btn-download" 
+          onClick={handleDownload} 
+          disabled={downloading}
+        >
+          {downloading 
+            ? (downloadProgress !== null ? `Downloading (${downloadProgress}%)...` : 'Downloading...') 
+            : 'Download'}
+        </button>
       </div>
     </div>
   );

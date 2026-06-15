@@ -101,8 +101,8 @@ export default function useMediaExtractor() {
     const handleStorageChange = (changes, areaName) => {
       if (areaName === 'local' && activeTabId) {
         const key = `media_cache_${activeTabId}`;
-        if (changes[key] && changes[key].newValue) {
-          setMedia(changes[key].newValue);
+        if (changes[key]) {
+          setMedia(changes[key].newValue || { videos: [], audios: [], images: [] });
         }
       }
     };

@@ -23,9 +23,22 @@ const cleanUrlForMatching = (url) => {
   if (!url) return '';
   try {
     const parsed = new URL(url);
-    return (parsed.origin + parsed.pathname).toLowerCase();
+    let pathname = parsed.pathname.toLowerCase();
+    
+    if (parsed.hostname.includes('googlevideo.com') || pathname.includes('/videoplayback')) {
+      const idParam = parsed.searchParams.get('id');
+      return `${parsed.origin}${pathname}?id=${idParam || ''}`.toLowerCase();
+    }
+    
+    pathname = pathname.replace(/\.(m3u8|mp4|webm|mpd|ts|mov|m4v|3gp)$/i, '');
+    pathname = pathname.replace(/[-_](\d+w|\d+p|\d+k|hls|master|preview)(_?\d+)?$/i, '');
+    
+    return (parsed.origin + pathname).toLowerCase();
   } catch (e) {
-    return url.split('?')[0].split('#')[0].toLowerCase();
+    let clean = url.split('?')[0].split('#')[0].toLowerCase();
+    clean = clean.replace(/\.(m3u8|mp4|webm|mpd|ts|mov|m4v|3gp)$/i, '');
+    clean = clean.replace(/[-_](\d+w|\d+p|\d+k|hls|master|preview)(_?\d+)?$/i, '');
+    return clean;
   }
 };
 
@@ -77,7 +90,26 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
       return false;
     }
 
-// Support both legacy 'getVideos' and new 'getMedia' message calls
+    if (request.type === 'spaNavigation') {
+      localNetworkUrls.length = 0;
+      setCapturedNetworkUrls([]);
+      window.clipnetMetadataRegistry = {};
+      
+      chrome.runtime.sendMessage({ type: 'getPageVideos' }, (response) => {
+        if (chrome.runtime.lastError) return;
+        const extraUrls = (response && response.videos) || [];
+        processPageVideos(extraUrls);
+        performScan((media) => {
+          safeSendMessage({
+            type: 'saveMedia',
+            payload: media
+          });
+        });
+      });
+      return false;
+    }
+
+    // Support both legacy 'getVideos' and new 'getMedia' message calls
     if (request.type === MESSAGE_TYPES.GET_MEDIA || request.type === 'getVideos') {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
         chrome.runtime.sendMessage({ type: 'getPageVideos' }, (response) => {
